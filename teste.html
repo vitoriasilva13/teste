@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Calculadora de Peixes com Análise de Dados</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background-color: #f0f8ff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: white; padding: 2rem; border-radius: 10px; shadow: 0 4px 8px rgba(0,0,0,0.1); width: 100%; max-width: 500px; text-align: center; }
+        h1 { color: #0077be; margin-bottom: 1rem; }
+        .input-group { margin-bottom: 1rem; text-align: left; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: bold; color: #555; }
+        input, select, button { width: 100%; padding: 0.8rem; margin-bottom: 0.5rem; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        button { background-color: #0077be; color: white; border: none; cursor: pointer; font-size: 1rem; }
+        button:hover { background-color: #005f99; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        #resultado, #info-coeficientes { margin-top: 1rem; padding: 1rem; background-color: #e6f7ff; border-radius: 5px; display: none; }
+        .destaque { font-size: 1.5rem; font-weight: bold; color: #0077be; }
+        .aviso { font-size: 0.9rem; color: #666; margin-bottom: 1rem; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>🐟 Análise e Calculadora</h1>
+
+        <div class="input-group" style="border-bottom: 2px dashed #ccc; padding-bottom: 1rem;">
+            <label for="arquivoCsv">1. Carregue o arquivo 'fish_data.csv':</label>
+            <input type="file" id="arquivoCsv" accept=".csv">
+            <button id="btn-abrir-tabela" onclick="abrirTabelaDados()" disabled>Ver tabela dos dados carregados</button>
+            <button id="btn-abrir-coef" onclick="abrirTabelaCoeficientes()" disabled>Ver coeficientes calculados</button>
+            <p class="aviso">O sistema calculará 'a' e 'b' automaticamente ao ler o arquivo.</p>
+        </div>
+
+        <div id="area-calculadora" style="opacity: 0.5; pointer-events: none;">
+            <div class="input-group">
+                <label for="especie">2. Escolha a Espécie:</label>
+                <select id="especie">
+                    <option value="">Aguardando arquivo...</option>
+                </select>
+            </div>
+
+            <div class="input-group">
+                <label for="comprimento">3. Comprimento (cm):</label>
+                <input type="number" id="comprimento" placeholder="Ex: 15.5" step="0.1">
+            </div>
+
+            <button onclick="calcularPesoEstimado()" id="btn-calcular">Calcular Peso</button>
+
+            <div id="resultado">
+                <p>Peso Estimado:</p>
+                <span id="valor-peso" class="destaque">0.00</span> <span>g</span>
+            </div>
+            
+            <div id="info-coeficientes">
+                <p>Parâmetros calculados para esta espécie:</p>
+                <p>a = <span id="val-a">---</span> | b = <span id="val-b">---</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let baseDeDados = {}; // Vai armazenar os coeficientes calculados
+        let dadosCsvBrutos = []; // Guarda as linhas originais para exibir na tabela
+
+        // Evento que dispara quando o usuário seleciona um arquivo
+        document.getElementById('arquivoCsv').addEventListener('change', function(e) {
+            const arquivo = e.target.files[0];
+            if (!arquivo) return;
+
+            const leitor = new FileReader();
+            
+            leitor.onload = function(evento) {
+                const textoCsv = evento.target.result;
+                processarCSV(textoCsv);
+            };
+            
+            leitor.readAsText(arquivo);
+        });
+
+        /**
+         * Transforma o texto do CSV em dados úteis e calcula a regressão
+         */
+        function processarCSV(texto) {
+            const linhas = texto.split('\n');
+            const dadosAgrupados = {};
+            dadosCsvBrutos = [];
+
+            // 1. Ler linha por linha e agrupar dados por espécie
+            // Começamos do i=1 para pular o cabeçalho (Species, Length, Weight...)
+            for (let i = 1; i < linhas.length; i++) {
+                const colunas = linhas[i].split(',');
+                
+                if (colunas.length < 3) continue; // Pula linhas vazias ou inválidas
+
+                const especie = colunas[0].trim();
+                const comprimento = parseFloat(colunas[1]);
+                const peso = parseFloat(colunas[2]);
+
+                // Validação básica de dados
+                if (especie && comprimento > 0 && peso > 0) {
+                    if (!dadosAgrupados[especie]) {
+                        dadosAgrupados[especie] = [];
+                    }
+                    dadosAgrupados[especie].push({ L: comprimento, W: peso });
+                    dadosCsvBrutos.push({ especie, comprimento, peso });
+                }
+            }
+
+            // 2. Para cada espécie, calcular 'a' e 'b'
+            baseDeDados = {}; // Limpa dados antigos
+            const selectEspecie = document.getElementById('especie');
+            selectEspecie.innerHTML = ""; // Limpa o dropdown
+
+            for (const especie in dadosAgrupados) {
+                const pontos = dadosAgrupados[especie];
+                
+                // Chamada da função matemática
+                const coeficientes = calcularRegressaoLinear(pontos);
+                
+                baseDeDados[especie] = { ...coeficientes, n: pontos.length };
+
+                // Adicionar ao dropdown
+                const option = document.createElement('option');
+                option.value = especie;
+                option.innerText = especie + ` (${pontos.length} amostras)`;
+                selectEspecie.appendChild(option);
+            }
+
+            // 3. Liberar a interface
+            document.getElementById('area-calculadora').style.opacity = "1";
+            document.getElementById('area-calculadora').style.pointerEvents = "auto";
+            const temDados = dadosCsvBrutos.length > 0;
+            document.getElementById('btn-abrir-tabela').disabled = !temDados;
+            document.getElementById('btn-abrir-coef').disabled = !temDados;
+            alert("Dados processados com sucesso! Agora pode usar a calculadora.");
+        }
+
+        /**
+         * FUNÇÃO MATEMÁTICA PRINCIPAL
+         * Calcula 'a' e 'b' usando o Método dos Mínimos Quadrados em escala logarítmica.
+         * Modelo: Weight = a * Length^b
+         * Linearização: ln(Weight) = ln(a) + b * ln(Length)
+         * Onde Y = ln(Weight) e X = ln(Length)
+         */
+        function calcularRegressaoLinear(pontos) {
+            let n = pontos.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+
+            for (let ponto of pontos) {
+                // Transformação Logarítmica (ln)
+                let x = Math.log(ponto.L);
+                let y = Math.log(ponto.W);
+
+                sumX += x;
+                sumY += y;
+                sumXY += (x * y);
+                sumXX += (x * x);
+            }
+
+            // Fórmulas de Regressão Linear Simples
+            // Slope (b)
+            let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+            
+            // Intercept (A, que é o ln(a))
+            let intercept = (sumY - slope * sumX) / n;
+
+            // Converter de volta: a = e^intercept
+            let a = Math.exp(intercept);
+
+            return { a: a, b: slope };
+        }
+
+        function calcularPesoEstimado() {
+            const especie = document.getElementById('especie').value.split(' (')[0]; // Pega só o nome
+            const comp = parseFloat(document.getElementById('comprimento').value);
+
+            if (!baseDeDados[especie] || !comp) {
+                alert("Selecione uma espécie e digite um comprimento.");
+                return;
+            }
+
+            const { a, b } = baseDeDados[especie];
+
+            // Fórmula: Peso = a * L^b
+            const peso = a * Math.pow(comp, b);
+
+            document.getElementById('valor-peso').innerText = peso.toFixed(2);
+            document.getElementById('val-a').innerText = a.toFixed(4);
+            document.getElementById('val-b').innerText = b.toFixed(4);
+            
+            document.getElementById('resultado').style.display = 'block';
+            document.getElementById('info-coeficientes').style.display = 'block';
+        }
+
+        function abrirTabelaDados() {
+            if (!dadosCsvBrutos.length) {
+                alert('Carregue o CSV antes de abrir a tabela.');
+                return;
+            }
+
+            const novaJanela = window.open('', '_blank');
+            const linhasTabela = dadosCsvBrutos.map(linha => {
+                return `<tr><td>${escaparHtml(linha.especie)}</td><td>${linha.comprimento}</td><td>${linha.peso}</td></tr>`;
+            }).join('');
+
+            const htmlTabela = `<!DOCTYPE html>
+            <html lang="pt-BR">
+            <head>
+                <meta charset="UTF-8">
+                <title>Dados do CSV</title>
+                <style>
+                    body { font-family: 'Segoe UI', sans-serif; background: #f9fbfd; padding: 20px; }
+                    h2 { color: #0077be; }
+                    table { border-collapse: collapse; width: 100%; background: white; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background: #0077be; color: white; }
+                    tbody tr:nth-child(2n) { background: #f1f7fc; }
+                </style>
+            </head>
+            <body>
+                <h2>Dados carregados do CSV</h2>
+                <table>
+                    <thead>
+                        <tr><th>Espécie</th><th>Comprimento (cm)</th><th>Peso (g)</th></tr>
+                    </thead>
+                    <tbody>
+                        ${linhasTabela}
+                    </tbody>
+                </table>
+            </body>
+            </html>`;
+
+            novaJanela.document.write(htmlTabela);
+            novaJanela.document.close();
+        }
+
+        function abrirTabelaCoeficientes() {
+            const especies = Object.keys(baseDeDados);
+            if (!especies.length) {
+                alert('Carregue o CSV antes de abrir os coeficientes.');
+                return;
+            }
+
+            const linhasTabela = especies.map(nome => {
+                const { a, b, n } = baseDeDados[nome];
+                return `<tr><td>${escaparHtml(nome)}</td><td>${a.toFixed(4)}</td><td>${b.toFixed(4)}</td><td>${n ?? '--'}</td></tr>`;
+            }).join('');
+
+            const htmlTabela = `<!DOCTYPE html>
+            <html lang="pt-BR">
+            <head>
+                <meta charset="UTF-8">
+                <title>Coeficientes Calculados</title>
+                <style>
+                    body { font-family: 'Segoe UI', sans-serif; background: #f9fbfd; padding: 20px; }
+                    h2 { color: #0077be; }
+                    table { border-collapse: collapse; width: 100%; background: white; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background: #0077be; color: white; }
+                    tbody tr:nth-child(2n) { background: #f1f7fc; }
+                </style>
+            </head>
+            <body>
+                <h2>Coeficientes por Espécie</h2>
+                <table>
+                    <thead>
+                        <tr><th>Espécie</th><th>a</th><th>b</th><th>Qtd. amostras</th></tr>
+                    </thead>
+                    <tbody>
+                        ${linhasTabela}
+                    </tbody>
+                </table>
+            </body>
+            </html>`;
+
+            const novaJanela = window.open('', '_blank');
+            novaJanela.document.write(htmlTabela);
+            novaJanela.document.close();
+        }
+
+        function escaparHtml(texto) {
+            const mapa = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return texto.replace(/[&<>"']/g, m => mapa[m]);
+        }
+    </script>
+</body>
+</html>
